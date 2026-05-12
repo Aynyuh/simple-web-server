@@ -174,6 +174,32 @@ function getIPs() {
     return ips;
 }
 
+function loadConfig(path) {
+    let tempConfig;
+
+    try {
+        tempConfig = fs.readFileSync(path, "utf8");
+    } catch (error) {
+        tempConfig = "{}";
+    }
+    try {
+        tempConfig = JSON.parse(tempConfig);
+    } catch (error) {
+        dialog.showErrorBox("Failed to parse config.json", `Something went wrong while parsing ${path}. The file is improperly formatted.`);
+        app.quit();
+    }
+
+    // resolve relative server's path to show it correctly in UI
+    for (let i = 0; i < (tempConfig.servers || []).length; i++) {
+        if (tempConfig.servers[i].path) {
+            tempConfig.servers[i].path = tempConfig.servers[i].path.replace(/^~/, os.homedir)
+            tempConfig.servers[i].path = global.path.resolve(tempConfig.servers[i].path);
+        }
+    }
+
+    return tempConfig;
+}
+
 let mainWindow = null;
 let config = {};
 
@@ -189,21 +215,23 @@ let reload_plugin_ids = [];
 app.on('ready', function() {
     if (!process.mas && !app.hasSingleInstanceLock()) return;
 
-    if (!fs.existsSync(path.join(app.getPath('userData'), "config.json"))) {
-        fs.writeFileSync(path.join(app.getPath('userData'), "config.json"), JSON.stringify({}, null, 2));
+    // if config file exists near the executable then use it,
+    // otherwise use default userData location config
+    let configPath = path.join(path.dirname(app.getPath("exe")), "config.json");
+
+    if (!fs.existsSync(configPath)) {
+        configPath = path.join(app.getPath("userData"), "config.json");
+
+        if (!fs.existsSync(configPath)) {
+            fs.writeFileSync(configPath, JSON.stringify({}, null, 2));
+        }
     }
 
-    try {
-        config = fs.readFileSync(path.join(app.getPath('userData'), "config.json"), "utf8");
-    } catch(error) {
-        config = "{}";
-    }
-    try {
-        config = JSON.parse(config);
-    } catch(error) {
-        dialog.showErrorBox("Failed to parse config.json", "Something went wrong while parsing config.json. The file is improperly formatted.");
-        app.quit();
-    }
+    console.log("["+(new Date()).toLocaleString()+`] Loading configuration file '${configPath}'.`);
+    config = loadConfig(configPath)
+    console.log(`[${(new Date()).toLocaleString()}] Loaded configuration:`)
+    console.log(config)
+
     if (config.log === true) {
         global.savingLogs = false;
         if (global.pendingSave) console.saveLogs();
@@ -211,7 +239,7 @@ app.on('ready', function() {
 
     try {
         if (!process.mas) {
-            chokidar.watch(path.join(app.getPath('userData'), "config.json"), {
+            chokidar.watch(configPath, {
                 ignored: /(^|[\/\\])\../, // ignore dotfiles
                 ignoreInitial: true,
                 awaitWriteFinish: {
@@ -222,24 +250,13 @@ app.on('ready', function() {
                 configFileChanged()
             });
         } else {
-            fs.watch(path.join(app.getPath('userData'), "config.json"), function(eventType, filename) {
+            fs.watch(configPath, function(eventType, filename) {
                 configFileChanged()
             });
         }
 
         function configFileChanged() {
-            let new_config;
-            try {
-                new_config = fs.readFileSync(path.join(app.getPath('userData'), "config.json"), "utf8");
-            } catch(error) {
-                new_config = "{}";
-            }
-            try {
-                new_config = JSON.parse(new_config);
-            } catch(error) {
-                dialog.showErrorBox("Failed to parse config.json", "Something went wrong while parsing config.json. The file is improperly formatted.");
-                app.quit();
-            }
+            const new_config = loadConfig(configPath)
 
             if (JSON.stringify(new_config) !== JSON.stringify(config)) {
                 console.log("["+(new Date()).toLocaleString()+"] config.json changed. Reloading UI.");
@@ -286,9 +303,9 @@ app.on('ready', function() {
                 if (reload_plugins_timeout) {
                     clearTimeout(reload_plugins_timeout);
                 }
-        
+
                 reload_plugin_ids.push(pluginid);
-        
+
                 reload_plugins_timeout = setTimeout(function() {
                     console.log("["+(new Date()).toLocaleString()+"] Plugins changed unexpectedly. Restarting affected servers and reloading UI if necessary.");
 
@@ -309,7 +326,7 @@ app.on('ready', function() {
         console.log("fs.watch or chokidar error or unsupported. App will not automatically update for changes to plugins.");
         console.error(e);
     }
-    
+
     bookmarks.init();
 
     if (config.tray) {
@@ -370,7 +387,7 @@ ipcMain.on('quit', quit)
 ipcMain.on('saveconfig', function(event, arg1) {
     config = arg1.config;
     try {
-        fs.writeFileSync(path.join(app.getPath('userData'), "config.json"), JSON.stringify(arg1.config, null, 2));
+        fs.writeFileSync(configPath, JSON.stringify(arg1.config, null, 2));
     } catch(e) {
         console.warn(e);
     }
@@ -496,13 +513,13 @@ function getLanguage() {
 
 function getLang() {
     if (getLanguage() !== "en") {
-        let lang_target_src = JSON.parse(fs.readFileSync(path.join(__dirname, "lang/"+language_filenames[getLanguage()]+".json"), "utf-8"));   
+        let lang_target_src = JSON.parse(fs.readFileSync(path.join(__dirname, "lang/"+language_filenames[getLanguage()]+".json"), "utf-8"));
         let lang_to_return = JSON.parse(fs.readFileSync(path.join(__dirname, "lang/en.json"), "utf-8"));
-        
+
         for (var i = 0; i < Object.keys(lang_target_src).length; i++) {
             lang_to_return[Object.keys(lang_target_src)[i]] = lang_target_src[Object.keys(lang_target_src)[i]];
         }
-        
+
         return lang_to_return;
     } else {
         return JSON.parse(fs.readFileSync(path.join(__dirname, "lang/en.json"), "utf-8"));
