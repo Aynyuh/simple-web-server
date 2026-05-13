@@ -1,0 +1,58 @@
+name: Build Portable x64 Versions (Linux & Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/jod'
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            **/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Save UID & GID
+        run: |
+          echo "HOST_UID=$(id -u)" >> $GITHUB_ENV
+          echo "HOST_GID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Build artifacts
+        env:
+          HOST_UID: ${{ env.HOST_UID }}
+          HOST_GID: ${{ env.HOST_GID }}
+        run: |          
+          docker run \
+            --rm \
+            --env HOST_UID=$HOST_UID \
+            --env HOST_GID=$HOST_GID \
+            --env ELECTRON_CACHE="/root/.cache/electron" \
+            --env ELECTRON_BUILDER_CACHE="/root/.cache/electron-builder" \
+            -v ${PWD}:/project \
+            -v ~/.cache/electron:/root/.cache/electron \
+            -v ~/.cache/electron-builder:/root/.cache/electron-builder \
+            electronuserland/builder:wine \
+            /bin/bash -c "yarn --link-duplicates --pure-lockfile --ignore-engines install \
+            && yarn exec electron-builder -- --win zip --linux zip --x64 \
+            && chown -R $HOST_UID:$HOST_GID /root/.cache/electron /root/.cache/electron-builder /project"
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*Linux*.zip
+          archive: false
+      
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*Windows*.zip
+          archive: false
